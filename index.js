@@ -138,10 +138,9 @@ async function handleRideRequest(request, response)  {
   if (!isVerified) {
     return response.status(403).send('Request could not be verified');        
   }
-  //request is verified from here.
+
+  //request is verified and request-independent sanity checks are done. Handle request.
   const actionString = body.action;
-  
-  //handle DELETE
   let ok = false;
 
   if (actionString === "DELETE") {
@@ -156,43 +155,9 @@ async function handleRideRequest(request, response)  {
   }
 
   if (!ok) {
-    return response.status(500).send('Request could not be handled');        
+    return response.status(500).send('Could not handle request');        
   }
 
-
-  const respJson = { body : JSON.stringify(body)};
-  const respStr = JSON.stringify(respJson);
-  console.log(`responding ${respStr}`);
-  response.send(respStr);
+  response.status(200).send('{"ok":true}');
 }
 
-
-
-/*
-
-function handleRequest(req, res) {
-  try {
-    const url = URL.parse(req.url);
-    const path = url.pathname;
-    const method = req.method;
-    if (path != API_ENDPOINT) {
-      res.status(404).end("Not found");
-      return;
-    }
-    if (method != 'POST') {
-      res.status(405).end("Method not allowed");
-      return;
-    }
-
-
-  } catch (e) {
-    res.status(500).end("Internal error, sorry!");
-  }
-
-}
-
-function handleCreateRide(req, res) {
-
-};
-
-*/

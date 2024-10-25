@@ -1,6 +1,6 @@
 const sqlite3 = require('sqlite3').verbose();
 
-let db = null;
+let dbPath = ":memory:";
 
 const createRideTable = `
 CREATE TABLE IF NOT EXISTS ride (
@@ -41,6 +41,10 @@ function isNumber(val) {
   return (typeof(val) === 'number' && isFinite(val));
 }
 
+function isInt(val) {
+  return (Number.isInteger(val));
+}
+
 function isString(val) {
   return (typeof(val) === 'string');
 }
@@ -49,7 +53,23 @@ function isStringOrUndefined(val) {
   return (typeof(val) === 'string') || (typeof(val) === 'undefined');
 }
 
-async function query(sql, params) {
+function isArray(val) {
+  return Array.isArray(val);
+}
+
+async function openDb(filename) {
+  return new Promise((resolve, reject) => {
+    let db = new sqlite3.Database(filename, (error) => {
+      if (error)
+        reject(error);
+      else
+        resolve(db);
+    });
+  });
+}
+
+//returns rows on success
+async function query(db, sql, params) {
   return new Promise((resolve, reject) => {
     db.all(sql, params, (error, rows) => {
       if (error)
@@ -60,42 +80,83 @@ async function query(sql, params) {
   });
 };
 
-async function init(filename) {
+//returns last row id on success
+async function run(db, sql, params) {
   return new Promise((resolve, reject) => {
-
-    if (db === null) {
-	 	  db = new sqlite3.Database(filename);
-		  const result = db.serialize(() => {
-			  db.run(createRideTable);
-		  	db.run(createLocationTable);
-        // createRide("myUuid",
-        //   {
-        //     publicKey: "myPubKey",
-        //     startDate: 123,
-        //     endDate: 456,
-        //     dist: 123.4,
-        //     motionDist: 112.3,
-        //     duration: 332,
-        //     motionDuration:321,
-        //     maxSpeed: 33.3,
-        //     rideType: 1,
-        //     vehicleType: 2,
-        //     mountType: 3,
-        //     flags: 0
-        //   });
-		  });
-      console.log(`using database at ${filename}`);
-    }
-    resolve();
+    db.run(sql, params, function(error) {
+      if (error)
+        reject(error);
+      else
+        resolve(this.lastID);
+    });
   });
+};
+
+
+//creates a location entry if proper data is given
+async function createLocation(db, rideId, location) {
+  const ok = isNumber(location.timestamp) &&
+    isNumber(location.latitude) &&
+    isNumber(location.longitude) &&
+    isNumber(location.accuracy) &&
+    isNumber(location.altitude) &&
+    isNumber(location.altitudeAccuracy) &&
+    isNumber(location.heading) &&
+    isNumber(location.headingAccuracy) &&
+    isNumber(location.speed) &&
+    isNumber(location.speedAccuracy);
+  if (!ok) {
+    return false;
+  }
+  const sql = `INSERT INTO location
+  (timestamp,latitude,longitude,accuracy,altitude,altitudeAccuracy,heading,headingAccuracy,speed,speedAccuracy)
+  VALUES (?,?,?,?,?,?,?,?,?,?)`
+  const values = [location.timestamp,location.latitude,location.longitude,location.accuracy,location.altitude,
+    location.altitudeAccuracy,location.heading,location.headingAccuracy,location.speed,location.speedAccuracy];
+  return run(db, sql, values);
+}
+
+// deletes old locations and inserts new locations for a ride
+async function replaceLocations(db, rideId, locations) {
+  await run(db, "DELETE FROM location WHERE rideId = ?", rideId);
+  let ok = true;
+  for (const locIdx in locations) {
+    const location = locations[locIdx];
+    ok = ok && await createLocation(db, rideId, location);
+  }
+  return ok;
+}
+
+//does init stuff, creating database if needed
+async function init(filename) {
+  dbPath = filename;
+  const db = await openDb(dbPath);
+  await run(db, createRideTable);
+  await run(db, createLocationTable);
+  db.close();
+
+  // create dummy rides for testing only
+  // createRide("uuid",
+  //   {startDate:1,endDate:2,dist:3,motionDist:4,duration:5,motionDuration:6,maxSpeed:7,publicKey:"hallo",rideType:8,vehicleType:9,mountType:10,flags:11}
+  // );
+  // createRide("uuid2",
+  //   {startDate:1,endDate:2,dist:3,motionDist:4,duration:5,motionDuration:6,maxSpeed:7,publicKey:"hallo",rideType:8,vehicleType:9,mountType:10,flags:11}
+  // );
+  console.log(`using database at ${dbPath}`);
 }
 
 async function getRidePublicKey(uuid) {
+  if (!isString(uuid)) {
+    return null;
+  }
+  let db = null;
   try {
-    if (!isString(uuid)) {
-      return null;
-    }
-    const result = await query("SELECT publicKey FROM ride WHERE uuid = (?) LIMIT 1", uuid);
+    db = await openDb(filename);
+  } catch (e) {
+    return null;
+  }
+  try {
+    const result = await query(db, "SELECT publicKey FROM ride WHERE uuid = ? LIMIT 1", uuid);
     if (result.length > 0) {
       return result[0].publicKey;
     } else {
@@ -103,18 +164,27 @@ async function getRidePublicKey(uuid) {
     }
   } catch (e) {
     console.log(`DB fail in getRidePublicKey: ${e}`);
-    return false;        
+    return null;
+  } finally {
+    db.close();
   }
 }
 
 async function createRide(uuid, data) {
+  //TODO: wrap in transaction *****
+  if (!isString(uuid)) {
+    return false;
+  }
+  if (!checkCreateRideData(data)) { //this might be duplicate, but we need to ensure sane input.
+    return false;
+  }
+  let db = null;
   try {
-    if (!isString(uuid)) {
-      return false;
-    }
-    if (!checkCreateRideData(data)) { //this might be duplicate, but we need to ensure sane input.
-      return false;
-    }
+    db = await openDb(dbPath);
+  } catch (e) {
+    return false;
+  }
+  try {
     const comment = isString(data.comment) ? data.comment : "";
     const sql = `INSERT INTO ride 
     (uuid,startDate,endDate,dist,motionDist,duration,motionDuration,maxSpeed,publicKey,rideType,vehicleType,mountType,flags,comment)
@@ -122,18 +192,29 @@ async function createRide(uuid, data) {
     (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
     const args = [uuid, data.startDate, data.endDate, data.dist, data.motionDist, data.duration, data.motionDuration,
       data.maxSpeed, data.publicKey, data.rideType, data.vehicleType, data.mountType, data.flags, comment];
-    await query(sql, args);
-    //TODO: locations ***************
+    const rideId = await run(db, sql, args);
+    if (isArray(data.locations)) {
+      await replaceLocations(db, rideId, data.locations);
+    }
     return true;
   } catch (e) {
     console.log(`DB fail in createRide: ${e}`);
-    return false;        
+    return false;
+  } finally {
+    db.close();
   }
 }
 
 async function updateRide(uuid, data) {
+  //TODO: wrap in transaction *****
+  let db = null;
   try {
-    const result = await query("SELECT * FROM ride WHERE uuid = ?", uuid);
+    db = await openDb(dbPath);
+  } catch (e) {
+    return false;
+  }
+  try {
+    const result = await query(db, "SELECT * FROM ride WHERE uuid = ?", uuid);
     if (result.length < 1) {
       return false;
     }
@@ -151,6 +232,7 @@ async function updateRide(uuid, data) {
     rideType = ?,
     vehicleType = ?,
     mountType = ?,
+    flags = ?,
     comment = ?
     WHERE id = ?
     `;
@@ -164,30 +246,35 @@ async function updateRide(uuid, data) {
       isNumber(data.motionDuration) ? data.motionDuration : existing.motionDuration,
       isNumber(data.maxSpeed)       ? data.maxSpeed       : existing.maxSpeed,
       isString(data.publicKey)      ? data.publicKey      : existing.publicKey,
-      isNumber(data.rideType)       ? data.rideType       : existing.rideType,
-      isNumber(data.vehicleType)    ? data.vehicleType    : existing.vehicleType,
-      isNumber(data.mountType)      ? data.mountType      : existing.mountType,
+      isInt(data.rideType)          ? data.rideType       : existing.rideType,
+      isInt(data.vehicleType)       ? data.vehicleType    : existing.vehicleType,
+      isInt(data.mountType)         ? data.mountType      : existing.mountType,
+      isInt(data.flags)             ? data.flags          : existing.flags,
       isString(data.comment)        ? data.comment        : existing.comment,
       existing.id
     ];
-    await query("SELECT * FROM ride WHERE uuid = ?", values); 
-    //TODO: locations **********
+    if (isArray(data.locations)) {
+      replaceLocations(db, existing.id, data.locations);
+    }
     return true;
   } catch (e) {
     console.log(`DB fail in updateRide: ${e}`);
     return false;    
+  } finally {
+    db.close();
   }
 }
 
 async function deleteRide(uuid) {
   try {
-    const result = await query("SELECT id FROM ride WHERE uuid = ? LIMIT 1", uuid);
+
+    const result = await query(db, "SELECT id FROM ride WHERE uuid = ? LIMIT 1", uuid);
     if (result.length < 1) {
       return true;
     }
     const rideId = result[0].id;
-    await query("DELETE FROM location WHERE rideId = (?)", rideId);
-    await query("DELETE FROM ride WHERE id = (?)", rideId);
+    await query(db, "DELETE FROM location WHERE rideId = (?)", rideId);
+    await query(db, "DELETE FROM ride WHERE id = (?)", rideId);
     return true;
   } catch (e) {
     console.log(`DB fail in deleteRide: ${e}`);
@@ -207,9 +294,10 @@ function checkCreateRideData(data) {
     isNumber(data.motionDuration) &&
     isNumber(data.maxSpeed)       &&
     isString(data.publicKey)      &&
-    isNumber(data.rideType)       && 
-    isNumber(data.vehicleType)    && 
-    isNumber(data.mountType)      && 
+    isInt(data.rideType)          && 
+    isInt(data.vehicleType)       && 
+    isInt(data.mountType)         && 
+    isInt(data.flags)             && 
     isStringOrUndefined(data.comment);
 }
 

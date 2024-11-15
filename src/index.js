@@ -14,7 +14,8 @@ const API_ENDPOINT = "/api/v1/rides";
 - "apikey" (constant),
 - "uuid" (ride uuid),
 - "data" (encapsulated JSON as string).
-- "signature" (Base64 of SHA256 signature of data string signed with private key)
+- "signature" (Base64 of SHA256-RSA (PKCS1v1.5) signature of data string using the ride's 
+private key)
 
 Data contains a dictionary with ride information. Based on DB state and contents,
 request will be treated as create, update or delete:
@@ -118,7 +119,7 @@ async function handleRideRequest(request, response)  {
   //if ride exists, take public key from there. Use provided pub key for new rides.
   const existingPublicKeyString = await db.getRidePublicKey(uuid);
   const rideExists = (typeof(existingPublicKeyString) == "string");
-  console.log(`ride exists : ${rideExists} pkString ${existingPublicKeyString}`);
+  console.log(`ride exists ${rideExists} pk ${existingPublicKeyString}`);
   const publicKeyString = rideExists ? existingPublicKeyString : data.publicKey;
   if (typeof(publicKeyString) != "string") {
     return response.status(400).send('Request invalid data pubkey');    

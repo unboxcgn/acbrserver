@@ -1,16 +1,15 @@
-ROM node:19-bullseye
- 
+FROM node:20.17
+
+ENV NODE_ENV=production
+
 WORKDIR /app
 
 COPY package*.json .
 
-RUN npm ci --only=production
+RUN npm ci
 
 COPY . .
-
-RUN npm prune --production
 
 EXPOSE 8080
 
 CMD [ "node", "index.js" ]
-

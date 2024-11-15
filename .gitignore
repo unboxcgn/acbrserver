@@ -1,4 +1,4 @@
 .DS_Store
-keys.js
+src/keys.js
 node_modules
 database.sqlite

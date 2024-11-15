@@ -149,12 +149,14 @@ async function getRidePublicKey(uuid) {
   if (!isString(uuid)) {
     return null;
   }
+  console.log(`querying ride with uuid ${uuid}`);
   let db = null;
   try {
-    db = await openDb(filename);
+    db = await openDb(dbPath);
   } catch (e) {
     return null;
   }
+  console.log(`querying ride with uuid ${uuid}`);
   try {
     const result = await query(db, "SELECT publicKey FROM ride WHERE uuid = ? LIMIT 1", uuid);
     if (result.length > 0) {

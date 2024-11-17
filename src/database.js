@@ -23,18 +23,30 @@ CREATE TABLE IF NOT EXISTS ride (
 
 const createLocationTable = `
 CREATE TABLE IF NOT EXISTS location(
-	id INTEGER PRIMARY KEY,
-	rideId INTEGER NOT NULL,
-	timestamp REAL NOT NULL,
-	latitude REAL NOT NULL,
-	longitude REAL NOT NULL,
-	accuracy REAL NOT NULL,
-	altitude REAL NOT NULL,
-	altitudeAccuracy REAL NOT NULL,
-	heading REAL NOT NULL,
-	headingAccuracy REAL NOT NULL,
-	speed REAL NOT NULL,
-	speedAccuracy REAL NOT NULL
+  id INTEGER PRIMARY KEY,
+  rideId INTEGER NOT NULL,
+  timestamp REAL NOT NULL,
+  latitude REAL NOT NULL,
+  longitude REAL NOT NULL,
+  accuracy REAL NOT NULL,
+  altitude REAL NOT NULL,
+  altitudeAccuracy REAL NOT NULL,
+  heading REAL NOT NULL,
+  headingAccuracy REAL NOT NULL,
+  speed REAL NOT NULL,
+  speedAccuracy REAL NOT NULL
+)`;
+
+const createAnnotationTable = `
+CREATE TABLE IF NOT EXISTS annotation(
+  id INTEGER PRIMARY KEY,
+  rideId INTEGER NOT NULL,
+  timestamp REAL NOT NULL,
+  latitude REAL NOT NULL,
+  longitude REAL NOT NULL,
+  type INTEGER NOT NULL DEFAULT 0,
+  flags INTEGER NOT NULL DEFAULT 0,
+  comment TEXT NOT NULL DEFAULT ''
 )`;
 
 function isNumber(val) {
@@ -51,6 +63,10 @@ function isString(val) {
 
 function isStringOrUndefined(val) {
   return (typeof(val) === 'string') || (typeof(val) === 'undefined');
+}
+
+function isUndefined(val) {
+  return (typeof(val) === 'undefined');
 }
 
 function isArray(val) {
@@ -109,9 +125,9 @@ async function createLocation(db, rideId, location) {
     return false;
   }
   const sql = `INSERT INTO location
-  (timestamp,latitude,longitude,accuracy,altitude,altitudeAccuracy,heading,headingAccuracy,speed,speedAccuracy)
-  VALUES (?,?,?,?,?,?,?,?,?,?)`
-  const values = [location.timestamp,location.latitude,location.longitude,location.accuracy,location.altitude,
+  (rideId,timestamp,latitude,longitude,accuracy,altitude,altitudeAccuracy,heading,headingAccuracy,speed,speedAccuracy)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+  const values = [rideId,location.timestamp,location.latitude,location.longitude,location.accuracy,location.altitude,
     location.altitudeAccuracy,location.heading,location.headingAccuracy,location.speed,location.speedAccuracy];
   return run(db, sql, values);
 }
@@ -127,12 +143,54 @@ async function replaceLocations(db, rideId, locations) {
   return ok;
 }
 
+//creates an annotation entry if proper data is given
+async function createAnnotation(db, rideId, annotation) {
+  if (isUndefined(annotation.type)) {
+    annotation.type = 0;
+  }
+  if (isUndefined(annotation.flags)) {
+    annotation.flags = 0;
+  }
+  if (isUndefined(annotation.comment)) {
+    annotation.comment = '';
+  }
+  const ok = isNumber(annotation.timestamp) &&
+    isNumber(annotation.latitude) &&
+    isNumber(annotation.longitude) &&
+    isNumber(annotation.type) &&
+    isNumber(annotation.flags) &&
+    isString(annotation.comment);
+  if (!ok) {
+    return false;
+  }
+  const sql = `INSERT INTO annotation
+  (rideId,timestamp,latitude,longitude,type,flags,comment)
+  VALUES (?,?,?,?,?,?,?)`
+  const values = [rideId,annotation.timestamp,annotation.latitude,annotation.longitude,annotation.type,annotation.flags,
+    annotation.comment];
+  return run(db, sql, values);
+}
+
+// deletes old annotations and inserts new annotations for a ride
+async function replaceAnnotations(db, rideId, annotations) {
+  await run(db, "DELETE FROM annotation WHERE rideId = ?", rideId);
+  let ok = true;
+  for (const idx in annotations) {
+    const annotation = annotations[idx];
+    ok = ok && await createAnnotation(db, rideId, annotation);
+  }
+  return ok;
+}
+
+
+
 //does init stuff, creating database if needed
 async function init(filename) {
   dbPath = filename;
   const db = await openDb(dbPath);
   await run(db, createRideTable);
   await run(db, createLocationTable);
+  await run(db, createAnnotationTable);
   db.close();
 
   // create dummy rides for testing only
@@ -149,14 +207,12 @@ async function getRidePublicKey(uuid) {
   if (!isString(uuid)) {
     return null;
   }
-  console.log(`querying ride with uuid ${uuid}`);
   let db = null;
   try {
     db = await openDb(dbPath);
   } catch (e) {
     return null;
   }
-  console.log(`querying ride with uuid ${uuid}`);
   try {
     const result = await query(db, "SELECT publicKey FROM ride WHERE uuid = ? LIMIT 1", uuid);
     if (result.length > 0) {
@@ -197,6 +253,9 @@ async function createRide(uuid, data) {
     const rideId = await run(db, sql, args);
     if (isArray(data.locations)) {
       await replaceLocations(db, rideId, data.locations);
+    }
+    if (isArray(data.annotations)) {
+      await replaceAnnotations(db, rideId, data.annotations);
     }
     return true;
   } catch (e) {
@@ -255,8 +314,12 @@ async function updateRide(uuid, data) {
       isString(data.comment)        ? data.comment        : existing.comment,
       existing.id
     ];
+    await run(db, sql, values);
     if (isArray(data.locations)) {
-      replaceLocations(db, existing.id, data.locations);
+      await replaceLocations(db, existing.id, data.locations);
+    }
+    if (isArray(data.annotations)) {
+      await replaceAnnotations(db, rideId, data.annotations);
     }
     return true;
   } catch (e) {
@@ -268,14 +331,20 @@ async function updateRide(uuid, data) {
 }
 
 async function deleteRide(uuid) {
+  let db = null;
   try {
-
+    db = await openDb(dbPath);
+  } catch (e) {
+    return false;
+  }
+  try {
     const result = await query(db, "SELECT id FROM ride WHERE uuid = ? LIMIT 1", uuid);
     if (result.length < 1) {
       return true;
     }
     const rideId = result[0].id;
     await query(db, "DELETE FROM location WHERE rideId = (?)", rideId);
+    await query(db, "DELETE FROM annotation WHERE rideId = (?)", rideId);
     await query(db, "DELETE FROM ride WHERE id = (?)", rideId);
     return true;
   } catch (e) {
@@ -303,6 +372,51 @@ function checkCreateRideData(data) {
     isStringOrUndefined(data.comment);
 }
 
+/** will return array of ids. Empty array on failure */
+async function getRideIds() {
+  let db = null;
+  try {
+    db = await openDb(dbPath);
+  } catch (e) {
+    return [];
+  }
+  try {
+    const results = await query(db, "SELECT id FROM ride");
+    return results.map(ride => ride.id);
+  } catch (e) {
+    console.log(`DB fail in getRideIds: ${e}`);
+    return [];
+  } finally {
+    db.close();
+  }
+}
+
+/** will return map of ride. null on failure */
+async function dumpRide(rideId) {
+  let db = null;
+  try {
+    db = await openDb(dbPath);
+  } catch (e) {
+    return null;
+  }
+  try {
+    const rides = await query(db, "SELECT startDate,endDate,dist,motionDist,duration,motionDuration,maxSpeed,rideType,vehicleType,mountType,flags,comment FROM ride WHERE id = ? LIMIT 1",rideId);
+    if (rides.length != 1) {
+      return null;
+    }
+    const dump = rides[0]
+    const locations = await query(db, "SELECT timestamp,latitude,longitude,accuracy,altitude,altitudeAccuracy,heading,headingAccuracy,speed,speedAccuracy FROM location WHERE rideId = ? ORDER BY timestamp",rideId);
+    dump['locations'] = locations;
+    const annotations = await query(db, "SELECT timestamp,latitude,longitude,type,flags,comment FROM annotation WHERE rideId = ? ORDER BY timestamp",rideId);
+    dump['annotations'] = annotations;
+    return dump;
+  } catch (e) {
+    console.log(`DB fail in dumpRide: ${e}`);
+    return null;
+  } finally {
+    db.close();
+  }
+}
 
 exports.init = init;
 exports.getRidePublicKey = getRidePublicKey;
@@ -310,3 +424,5 @@ exports.createRide = createRide;
 exports.updateRide = updateRide;
 exports.deleteRide = deleteRide;
 exports.checkCreateRideData = checkCreateRideData;
+exports.getRideIds = getRideIds;
+exports.dumpRide = dumpRide;

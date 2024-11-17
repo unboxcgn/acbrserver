@@ -1,0 +1,5 @@
+{
+	"port"     : 8080,
+	"dbfile"   : "<your database file>",
+	"apikeys"  : ["Accepted", "API", "keys", "here"]
+}

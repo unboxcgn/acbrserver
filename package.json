@@ -2,14 +2,16 @@
   "name": "unboxserver",
   "version": "1.0.0",
   "description": "Unbox server",
-  "main": "index.js",
+  "main": "src/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/index.js",
+    "test": "node src/test.js"
   },
   "author": "Matthias Krauss",
   "license": "BSD-3-Clause",
   "dependencies": {
     "body-parser": "^1.20.2",
+    "commander": "^12.1.0",
     "express": "^4.19.2",
     "sqlite3": "^5.1.7"
   }

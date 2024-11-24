@@ -1,7 +1,10 @@
 .DS_Store
 config.json
+*-config.json
 src/keys.js
 node_modules
 database.sqlite
 archive.zip
+notes.md
+
 

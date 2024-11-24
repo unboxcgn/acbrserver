@@ -381,7 +381,7 @@ async function getRideIds() {
     return [];
   }
   try {
-    const results = await query(db, "SELECT id FROM ride");
+    const results = await query(db, "SELECT id FROM ride ORDER BY startDate DESC");
     return results.map(ride => ride.id);
   } catch (e) {
     console.log(`DB fail in getRideIds: ${e}`);
@@ -392,7 +392,7 @@ async function getRideIds() {
 }
 
 /** will return map of ride. null on failure */
-async function dumpRide(rideId) {
+async function dumpRide(rideId, doLocations = true, doAnnotations = true) {
   let db = null;
   try {
     db = await openDb(dbPath);
@@ -405,10 +405,14 @@ async function dumpRide(rideId) {
       return null;
     }
     const dump = rides[0]
-    const locations = await query(db, "SELECT timestamp,latitude,longitude,accuracy,altitude,altitudeAccuracy,heading,headingAccuracy,speed,speedAccuracy FROM location WHERE rideId = ? ORDER BY timestamp",rideId);
-    dump['locations'] = locations;
-    const annotations = await query(db, "SELECT timestamp,latitude,longitude,type,flags,comment FROM annotation WHERE rideId = ? ORDER BY timestamp",rideId);
-    dump['annotations'] = annotations;
+    if (doLocations) {
+      const locations = await query(db, "SELECT timestamp,latitude,longitude,accuracy,altitude,altitudeAccuracy,heading,headingAccuracy,speed,speedAccuracy FROM location WHERE rideId = ? ORDER BY timestamp",rideId);
+      dump['locations'] = locations;
+    }
+    if (doAnnotations) {
+      const annotations = await query(db, "SELECT timestamp,latitude,longitude,type,flags,comment FROM annotation WHERE rideId = ? ORDER BY timestamp",rideId);
+      dump['annotations'] = annotations;
+    }
     return dump;
   } catch (e) {
     console.log(`DB fail in dumpRide: ${e}`);

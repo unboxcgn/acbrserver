@@ -165,12 +165,15 @@ async function handlePostRides(request, response)  {
 
 async function handleGetRides(request, response)  {
   response.status(200);
+  const locations = (request.query.locations === '0') ? false : true;
+  const annotations = (request.query.annotations === '0') ? false : true;
+
   response.setHeader('content-type', 'application/json');
   const rideIds = await db.getRideIds();
   const dump = [];
   for (const idx in rideIds) {
     const id = rideIds[idx];
-    const ride = await db.dumpRide(id);
+    const ride = await db.dumpRide(id, locations, annotations);
     if (typeof(ride) === 'object') {
       dump.push(ride);
     }

@@ -37,17 +37,20 @@ CREATE TABLE IF NOT EXISTS location(
   speedAccuracy REAL NOT NULL
 )`;
 
-const createAnnotationTable = `
-CREATE TABLE IF NOT EXISTS annotation(
+const createAnnotationTable = `CREATE TABLE IF NOT EXISTS annotation(
   id INTEGER PRIMARY KEY,
   rideId INTEGER NOT NULL,
   timestamp REAL NOT NULL,
   latitude REAL NOT NULL,
   longitude REAL NOT NULL,
-  type INTEGER NOT NULL DEFAULT 0,
-  flags INTEGER NOT NULL DEFAULT 0,
+  accuracy REAL NOT NULL,
+  altitude REAL NOT NULL,
+  altitudeAccuracy REAL NOT NULL,
+  severity INTEGER NOT NULL DEFAULT 50,
+  tags TEXT NOT NULL DEFAULT '',
   comment TEXT NOT NULL DEFAULT ''
 )`;
+
 
 function isNumber(val) {
   return (typeof(val) === 'number' && isFinite(val));
@@ -71,6 +74,21 @@ function isUndefined(val) {
 
 function isArray(val) {
   return Array.isArray(val);
+}
+
+
+async function migrateAnnotationsTable(filename) {
+  const db = await openDb(filename);
+  try { await run(db, `ALTER TABLE annotation DROP COLUMN type;`); } catch (e) { console.log(e); }
+  try { await run(db, `ALTER TABLE annotation DROP COLUMN flags;`); } catch (e) { console.log(e); }
+  try { await run(db, `ALTER TABLE annotation DROP COLUMN comment;`); } catch (e) { console.log(e); }
+  try { await run(db, `ALTER TABLE annotation ADD COLUMN accuracy;`); } catch (e) { console.log(e); }
+  try { await run(db, `ALTER TABLE annotation ADD COLUMN altitude;`); } catch (e) { console.log(e); }
+  try { await run(db, `ALTER TABLE annotation ADD COLUMN altitudeAccuracy REAL;`); } catch (e) { console.log(e); }
+  try { await run(db, `ALTER TABLE annotation ADD COLUMN severity INTEGER NOT NULL DEFAULT 50;`); } catch (e) { console.log(e); }
+  try { await run(db, `ALTER TABLE annotation ADD COLUMN tags TEXT NOT NULL DEFAULT '';`); } catch (e) { console.log(e); }
+  try { await run(db, `ALTER TABLE annotation ADD COLUMN comment TEXT NOT NULL DEFAULT '';`); } catch (e) { console.log(e); }
+  await db.close();
 }
 
 async function openDb(filename) {
@@ -145,29 +163,24 @@ async function replaceLocations(db, rideId, locations) {
 
 //creates an annotation entry if proper data is given
 async function createAnnotation(db, rideId, annotation) {
-  if (isUndefined(annotation.type)) {
-    annotation.type = 0;
-  }
-  if (isUndefined(annotation.flags)) {
-    annotation.flags = 0;
-  }
-  if (isUndefined(annotation.comment)) {
-    annotation.comment = '';
-  }
   const ok = isNumber(annotation.timestamp) &&
     isNumber(annotation.latitude) &&
     isNumber(annotation.longitude) &&
-    isNumber(annotation.type) &&
-    isNumber(annotation.flags) &&
+    isNumber(annotation.accuracy) &&
+    isNumber(annotation.altitude) &&
+    isNumber(annotation.altitudeAccuracy) &&
+    isNumber(annotation.severity) &&
+    isString(annotation.tags) &&
     isString(annotation.comment);
   if (!ok) {
     return false;
   }
   const sql = `INSERT INTO annotation
-  (rideId,timestamp,latitude,longitude,type,flags,comment)
-  VALUES (?,?,?,?,?,?,?)`
-  const values = [rideId,annotation.timestamp,annotation.latitude,annotation.longitude,annotation.type,annotation.flags,
-    annotation.comment];
+  (rideId,timestamp,latitude,longitude,accuracy,altitude,altitudeAccuracy,severity,tags,comment)
+  VALUES (?,?,?,?,?,?,?,?,?,?)`
+  const values = [rideId, annotation.timestamp, annotation.latitude, annotation.longitude,
+    annotation.accuracy, annotation.altitude, annotation.altitudeAccuracy,
+    annotation.severity, annotation.tags, annotation.comment];
   return run(db, sql, values);
 }
 
@@ -181,8 +194,6 @@ async function replaceAnnotations(db, rideId, annotations) {
   }
   return ok;
 }
-
-
 
 //does init stuff, creating database if needed
 async function init(filename) {
@@ -260,6 +271,7 @@ async function createRide(uuid, data) {
     return true;
   } catch (e) {
     console.log(`DB fail in createRide: ${e}`);
+    console.log(`data was ${JSON.stringify(data)}`);
     return false;
   } finally {
     db.close();
@@ -410,7 +422,7 @@ async function dumpRide(rideId, doLocations = true, doAnnotations = true) {
       dump['locations'] = locations;
     }
     if (doAnnotations) {
-      const annotations = await query(db, "SELECT timestamp,latitude,longitude,type,flags,comment FROM annotation WHERE rideId = ? ORDER BY timestamp",rideId);
+      const annotations = await query(db, "SELECT timestamp,latitude,longitude,accuracy,altitude,altitudeAccuracy,severity,tags,comment FROM annotation WHERE rideId = ? ORDER BY timestamp",rideId);
       dump['annotations'] = annotations;
     }
     return dump;
@@ -430,3 +442,4 @@ exports.deleteRide = deleteRide;
 exports.checkCreateRideData = checkCreateRideData;
 exports.getRideIds = getRideIds;
 exports.dumpRide = dumpRide;
+exports.migrateAnnotationsTable = migrateAnnotationsTable;

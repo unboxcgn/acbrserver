@@ -9,7 +9,8 @@ program
   .option('-c, --config <string>', 'configuration file', './config.json')
   .option('-p, --port <integer>', 'server port')
   .option('-b, --dbfile <string>', 'SQLite DB file')
-  .option('-a, --apikeys <string>', 'Single API key or JSON Array of API keys');
+  .option('-a, --apikeys <string>', 'Single API key or JSON Array of API keys')
+  .option('--migrate-annotations-table', 'Migrate annotations table');
 
 program.parse();
 
@@ -94,6 +95,12 @@ if (!Array.isArray(keys)) {
 }
 
 console.log(`Using port ${port} dbfile file ${dbfile} key count ${keys.length}`);
+
+if (options.migrateAnnotationsTable) {
+  console.log(`Migrating annotations table. Note: You should not need to do this. It's better to drop the table (losing its contents). Will be recreated on next start.`);
+  const db = require('./database.js');
+  db.migrateAnnotationsTable(dbfile).then(() => {process.exit(1);});
+}
 
 server.runServer(port, dbfile, keys);  
 
